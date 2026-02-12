@@ -160,6 +160,74 @@ def predict(x, a, mu):
 #     print(p)
 # return predicates, mu, a, [accuracy, precision, recall, f1]
 
+def compute_predicates(
+    x0,
+    selected,
+    num_predicates,
+    attribute_names=None,
+    n_iter=1000,
+    device=device,
+):
+    """
+    x0: [n_points, n_features]
+    selected: [n_points]
+    num_predicates: maximum number of learned predicates
+    """
+    mu_init = None
+    a_init = 0.4
+
+    n_points, n_features = x0.shape
+    n_brushes = selected.shape[0]
+
+    # prepare training data
+    # orginal data extent
+    vmin = x0.min(0)
+    vmax = x0.max(0)
+    x = torch.from_numpy(x0.astype(np.float32)).to(device)
+    label = torch.from_numpy(selected).float().to(device)
+    # normalize
+    mean = x.mean(0)
+    scale = x.std(0) + 0.1
+    x = (x - mean) / scale
+
+    non_selected_label = label[~selected]
+    selected_label = label[selected]
+    non_selected_x = x[~selected]
+    selected_x = x[selected]
+    selection_centroid = selected_x.mean(0)    
+    if mu_init is None:
+        mu_init = torch.stack([selection_centroid  for i in range(num_predicates)], 0)
+        
+    a = (a_init + 0.1 * (2 * torch.rand(num_predicates, n_features) - 1)).to(device)
+    mu = mu_init + 0.1 * (2 * torch.rand(num_predicates, x.shape[1], device=device) - 1)
+    a.requires_grad_(True)
+    mu.requires_grad_(True)
+
+    n_selected = selected.sum()
+    n_unselected = n_points - n_selected
+    instance_weight = torch.ones(x.shape[0]).to(device)
+    instance_weight[st] = n_points / n_selected
+    instance_weight[~st] = n_points / n_unselected
+    bce = nn.BCELoss(weight=instance_weight)
+
+    for e in range(n_iter):
+        selected_pointwise_bce_per_predicate = []
+        loss_per_predicate = []
+        for i in range(num_predicates):
+            non_selected_pred = predict(non_selected_x, a[i], mu[i])
+            selected_pred = predict(selected_x, a[i], mu[i])
+            non_selected_loss = bce(non_selected_pred, non_selected_label)
+            selected_loss = bce(selected_pred, selected_label)
+
+            selected_pointwise_bce_per_predicate.append(selected_loss)
+            loss = selected_loss + non_selected_loss
+            loss += (mu[i] - selection_centroid).pow(2).mean() * 20
+            loss_per_predicate.append(loss)
+
+        min_selected_pointwise_bce = torch.max(selected_pointwise_bce_per_predicate, 0) # n_selected
+        coverage_loss = sum(min_selected_pointwise_bce) / n_selected
+        total_loss = sum(loss_per_predicate) + coverage_loss
+        
 
 def compute_predicate_sequence(
     x0,
