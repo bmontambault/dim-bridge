@@ -227,7 +227,7 @@ def compute_predicates(
 
         min_selected_pointwise_bce = torch.min(selected_pointwise_bce_per_predicate, 0) # n_selected
         selection_coverage_loss = min_selected_pointwise_bce.mean()
-        feature_coverage_loss = sum(torch.min(a, 0))
+        feature_coverage_loss = sum(torch.min(1/a, 0))
         total_loss = mean(loss_per_predicate) + selection_coverage_loss + feature_coverage_loss
 
     
